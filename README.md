@@ -1,12 +1,13 @@
 # tsk-parser
-tsk-parser CSharp Version
-parser for A-PM-90A/UF Series Map Data File
 
+A C# version of the parser for A-PM-90A/UF Series Map Data File.
 
-This Project is orgined from https://github.com/larvata/tsk-parser .But there are some changes
+This project is a C# port of the original [tsk-parser](https://github.com/larvata/tsk-parser) with the following enhancements:
 
-## I turn it from coffee.js to C# version .
-## Add two test file .
-## Make test tskfile to html file (make it visible) .
+## Changes from Original
 
-Please feel free to try it .
+1. Converted from CoffeeScript to C#
+2. Added two test files
+3. Added functionality to convert TSK files to HTML for better visualization
+
+Please feel free to try it out!
