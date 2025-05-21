@@ -1,0 +1,567 @@
+<!DOCTYPE html>
+<html lang="zh">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Map图查看</title>
+    <style>
+        canvas {
+            border: 1px solid black;
+        }
+
+        #app {
+            display: flex;
+            justify-content: center;
+        }
+    </style>
+</head>
+
+<body>
+    <div id="app">
+        <div>
+            <h1>Map图查看</h1>
+            <!-- 添加单选框以决定显示软硬件Bin -->
+            <div style="margin-top: 20px;">
+                <label>
+                    <input type="radio" name="binType" value="hw" checked>
+                    显示硬件Bin
+                </label>
+                <label style="margin-left: 10px;">
+                    <input type="radio" name="binType" value="sw">
+                    显示软件Bin
+                </label>
+            </div>
+
+            <div id="buttonContainer"></div> <!-- 添加按钮容器 -->
+            <div id="countDisplay" style="margin-top: 10px; font-size: 16px;"></div> <!-- 显示数量的容器 -->
+            <!-- 添加滚动条和比例显示 -->
+            <div style="margin-top: 20px;">
+                <label for="boxSizeRange">调整晶圆宽高比: <span id="boxSizeValue">0</span></label>
+                <input type="range" id="boxSizeRange" min="-3" max="3" value="0" step="0.1" />
+            </div>
+            <!-- 添加单选框以决定是否忽略复测数据 -->
+            <div style="margin-top: 20px;">
+                <label>
+                    <input type="radio" name="ignoreRetest" value="yes" checked>
+                    显示初测数据
+                </label>
+                <label style="margin-left: 10px;">
+                    <input type="radio" name="ignoreRetest" value="no">
+                    显示复测数据
+                </label>
+            </div>
+
+            <!-- 添加回到中心的按钮 -->
+            <button id="resetViewButton" style="margin-top: 20px;">重置画面</button>
+            <button id="goCenter" style="margin-top: 20px;">回到中心</button>
+
+            <!-- 添加表格用于显示HWBin数量和百分比 -->
+            <table id="hwBinTable" border="1" style="margin-top: 20px; width: 100%;">
+                <thead>
+                    <tr>
+                        <th>Bin</th>
+                        <th>数量</th>
+                        <th>占比 (%)</th>
+                    </tr>
+                </thead>
+                <tbody>
+                </tbody>
+            </table>
+        </div>
+        <div>
+            <canvas id="myCanvas" width="1500" height="1200"></canvas>
+        </div>
+    </div>
+    <script>
+
+
+        //--tag
+        // // 数据点示例  这里为程序生成数据插入点
+        // var dataPoints = [
+        //     { X: 1, Y: 1, HWBin: '0', SWBin: '0' },
+        //     { X: 2, Y: 1, HWBin: '1', SWBin: '1' },
+        //     { X: 3, Y: 1, HWBin: '2', SWBin: '2' },
+        //     { X: 4, Y: 1, HWBin: '3', SWBin: '3' },
+        //     { X: 5, Y: 1, HWBin: '4', SWBin: '4' },
+        //     { X: 6, Y: 1, HWBin: '5', SWBin: '5' },
+        //     { X: 7, Y: 1, HWBin: '6', SWBin: '6' },
+        //     { X: 8, Y: 1, HWBin: '7', SWBin: '7' },
+        //     { X: 9, Y: 1, HWBin: '8', SWBin: '8' },
+        //     { X: 10, Y: 1, HWBin: '9', SWBin: '9' }
+        // ];
+
+        // 添加事件监听器以根据单选框的选择更新绘制
+        document.querySelectorAll('input[name="binType"]').forEach((radio) => {
+            radio.addEventListener('change', function () {
+                draw(); // 重新绘制canvas
+                updateHWBinTable();
+            });
+        });
+
+
+        // 添加事件监听器以根据单选框的选择更新绘制
+        document.querySelectorAll('input[name="ignoreRetest"]').forEach((radio) => {
+            radio.addEventListener('change', function () {
+                draw(); // 重新绘制canvas
+                updateHWBinTable();
+            });
+        });
+
+
+        // 更新boxSize的比例
+        document.getElementById('boxSizeRange').addEventListener('input', function () {
+            var ratio = parseFloat(this.value); // 获取当前比例
+
+            if (ratio > 0) {
+                //增加X比例
+                boxSizeX = boxSize * (1 + ratio)
+                console.log('boxSizeX:' + boxSizeX)
+            }
+            else {
+                //增加Y比例
+                boxSizeY = boxSize * (1 + Math.abs(ratio))
+                console.log('boxSizeY:' + boxSizeY)
+            }
+
+            document.getElementById('boxSizeValue').innerText = ratio; // 更新显示的比例
+            draw(); // 重新绘制canvas
+            updateHWBinTable();
+        });
+
+        document.getElementById('countDisplay').innerText = '总数量: ' + dataPoints.length;
+
+        // 添加重置页面按钮事件处理
+        document.getElementById('resetViewButton').onclick = function () {
+            offsetX = 0; // 重置X偏移量
+            offsetY = 0; // 重置Y偏移量
+            scale = 1; // 重置缩放比例
+            draw(); // 重新绘制canvas
+            updateHWBinTable();
+        };
+
+        // 添加回到中心的按钮事件处理
+        document.getElementById('goCenter').onclick = function () {
+            offsetX = 0; // 重置X偏移量
+            offsetY = 0; // 重置Y偏移量
+            draw(); // 重新绘制canvas
+            updateHWBinTable();
+        };
+
+        // 更新HWBin表格
+        function updateHWBinTable() {
+            if (binCountObj == null)
+                return;
+
+            // 获取表格的tbody元素
+            const tbody = document.getElementById('hwBinTable').getElementsByTagName('tbody')[0];
+            tbody.innerHTML = ''; // 清空表格内容
+
+            let totalDataPoints = 0;
+
+            for (let i in binCountObj) {
+                totalDataPoints += binCountObj[i];
+            }
+
+            // 填充表格
+            for (let i in binCountObj) {
+                const count = binCountObj[i];
+                const percentage = totalDataPoints > 0 ? ((count / totalDataPoints) * 100).toFixed(2) : 0; // 计算百分比
+                const row = tbody.insertRow();
+                row.insertCell(0).innerText = i; // HWBin
+                row.insertCell(1).innerText = count; // 数量
+                row.insertCell(2).innerText = percentage + '%'; // 占比
+            }
+
+            const row = tbody.insertRow();
+            row.insertCell(0).innerText = '合计'; // HWBin
+            row.insertCell(1).innerText = totalDataPoints; // 数量
+            row.insertCell(2).innerText = '100%'; // 占比
+        }
+
+        setTimeout(() => {
+            //初始更新HWBin表格
+            updateHWBinTable();
+        }, 100);
+
+        var _hBinFilter = [];
+        // 记录当前选中的按钮
+        let selectedButtons = [];
+
+        let maxHBin = -Infinity; // 初始化为负无穷
+        let maxSWBin = -Infinity; // 初始化为负无穷
+
+        const getDataPointsPosKey = (dataPoint) => {
+            return `${dataPoint.X},${dataPoint.Y}`;
+        }
+
+        // 使用x,y作为键，存储数据点（用空间换时间，避免大量数据遍历）
+        const dataPointsDic = {}; // 初始化一个空对象
+        for (let i = 0; i < dataPoints.length; i++) {
+            const hwBinValue = parseInt(dataPoints[i].HWBin);
+            const swBinValue = parseInt(dataPoints[i].SWBin);
+
+            if (hwBinValue > maxHBin) {
+                maxHBin = hwBinValue; // 更新最大HWBin
+            }
+            if (swBinValue > maxSWBin) {
+                maxSWBin = swBinValue; // 更新最大SWBin
+            }
+            const key = getDataPointsPosKey(dataPoints[i]); // 使用 x,y 作为键
+            const value = { index: i, HWBin: dataPoints[i].HWBin, SWBin: dataPoints[i].SWBin }; // 创建值对象
+            // 检查键是否已存在
+            if (!dataPointsDic[key]) {
+                dataPointsDic[key] = []; // 如果不存在，初始化为一个空数组
+            }
+            dataPointsDic[key].push(value); // 将值对象追加到数组中
+        }
+
+        // 创建按钮并添加到页面
+        var buttonContainer = document.getElementById('buttonContainer');
+        for (let i = 0; i <= Math.max(maxHBin, maxSWBin); i++) {
+            let button = document.createElement('button');
+            if (i == 0)
+                button.innerHTML = '全部';
+            else
+                button.innerHTML = i; // 设置按钮显示的数值
+            button.style.backgroundColor = GetColorFromHWBin(i.toString()); // 设置按钮背景颜色
+            button.style.color = 'white'; // 设置按钮文字颜色
+            button.style.margin = '5px'; // 设置按钮间距
+            button.onclick = function () {
+
+                if (i != 0) {
+                    if (_hBinFilter.indexOf(i.toString()) == -1) {
+                        _hBinFilter.push(i.toString());
+
+                        button.style.border = '5px solid gray'; // 添加灰色边框
+                        selectedButtons.push(button);
+                    }
+                    else {
+                        _hBinFilter.splice(_hBinFilter.indexOf(i.toString()), 1);
+
+                        button.style.border = "none";
+                        selectedButtons.splice(selectedButtons.indexOf(i), 1);
+                    }
+                }
+                else {
+                    _hBinFilter = [];
+                    selectedButtons.forEach(btn => {
+                        btn.style.border = "none";
+                    });
+                    selectedButtons = [];
+                }
+
+                draw()
+
+                // // 显示该HWBin的数量
+                // if (i == 0) {
+                //     document.getElementById('countDisplay').innerText = '总数量: ' + dataPoints.length;
+                // }
+                // else {
+                //     let filteredDataPoints = dataPoints.filter(point => point.HWBin === i.toString());
+                //     document.getElementById('countDisplay').innerText = 'HBin ' + i + ' 的数量: ' + filteredDataPoints.length;
+                // }
+            };
+            buttonContainer.appendChild(button); // 将按钮添加到容器中
+        }
+
+        var canvas = document.getElementById('myCanvas');
+        var ctx = canvas.getContext('2d');
+
+
+        // 函数用于调整canvas大小
+        function resizeCanvas() {
+            canvas.width = window.innerWidth - 400; // 设置canvas宽度为窗口宽度减去400
+            canvas.height = window.innerHeight - 20; // 设置canvas高度为窗口高度
+            draw(); // 重新绘制canvas
+        }
+
+        // 在页面加载时调整canvas大小
+        window.onload = resizeCanvas;
+
+        // 在窗口大小变化时调整canvas大小
+        window.onresize = resizeCanvas;
+
+        var width = 1500;
+        var height = 1200;
+
+        // 缩放和拖动变量
+        var scale = 1;
+        var offsetX = 0;
+        var offsetY = 0;
+        var isDragging = false;
+        var startX, startY;
+
+        // 计算中心点
+        var minX = 1000;// Math.min(...dataPoints.map(p => p.X));
+        var maxX = -1000;// Math.max(...dataPoints.map(p => p.X));
+        var minY = 1000;//Math.min(...dataPoints.map(p => p.Y));
+        var maxY = -1000;//Math.max(...dataPoints.map(p => p.Y));
+
+        dataPoints.forEach(item => {
+            if (item.X > maxX)
+                maxX = item.X
+            if (item.X < minX)
+                minX = item.X
+
+            if (item.Y > maxY)
+                maxY = item.Y
+            if (item.Y < minY)
+                minY = item.Y
+        })
+
+
+        var centerX = (minX + maxX) / 2;
+        var centerY = (minY + maxY) / 2;
+
+        // 边框和文本的大小
+        var boxSize = 15; // 边框的大小
+        var boxSizeX = 15; //边框宽
+        var boxSizeY = 15;  //边框高
+
+
+
+        // 设置字体大小
+        ctx.font = '10px Arial'; // 设置字体大小为15px
+        var fontSize = 10;
+
+        // 添加提示框元素
+        var tooltip = document.createElement('div');
+        tooltip.style.position = 'absolute';
+        tooltip.style.backgroundColor = 'rgba(255, 255, 255, 0.8)';
+        tooltip.style.border = '1px solid black';
+        tooltip.style.padding = '5px';
+        tooltip.style.display = 'none';
+        document.body.appendChild(tooltip);
+
+        // 添加鼠标移动事件处理， 如果不需要Hover效果，则可以清理掉此函数
+        canvas.addEventListener('mousemove', function (e) {
+            return;
+            var mouseX = e.offsetX;
+            var mouseY = e.offsetY;
+            var found = false;
+
+            // 清空画布并重新绘制所有数据点
+            draw();
+
+            dataPoints.forEach(point => {
+                var adjustedX = (point.X - centerX) * boxSize * scale + (canvas.width / 2 + offsetX);
+                var adjustedY = (point.Y - centerY) * boxSize * scale + (canvas.height / 2 + offsetY);
+
+                // 检查鼠标是否在数据点区域内
+                if (mouseX >= adjustedX - boxSize * scale / 2 && mouseX <= adjustedX + boxSize * scale / 2 &&
+                    mouseY >= adjustedY - boxSize * scale / 2 && mouseY <= adjustedY + boxSize * scale / 2) {
+                    tooltip.innerHTML = 'HWBin: ' + point.HWBin + '<br>SWBin: ' + point.SWBin + '<br>X: ' + point.X + '<br>Y: ' + point.Y;
+                    tooltip.style.left = (e.pageX + 10) + 'px';
+                    tooltip.style.top = (e.pageY + 10) + 'px';
+                    tooltip.style.display = 'block';
+                    found = true;
+
+                    // 高亮该区域
+                    ctx.fillStyle = 'yellow'; // 高亮颜色
+                    ctx.fillRect(adjustedX - boxSize * scale / 2, adjustedY - boxSize * scale / 2, boxSize * scale, boxSize * scale);
+                } else {
+                    // 绘制正常状态
+                    var color = point.HWBin === '4' ? 'red' : GetColorFromHWBin(point.HWBin);
+                    ctx.fillStyle = color;
+                    ctx.fillRect(adjustedX - boxSize * scale / 2, adjustedY - boxSize * scale / 2, boxSize * scale, boxSize * scale);
+                }
+            });
+
+            if (!found) {
+                tooltip.style.display = 'none'; // 隐藏提示框
+            }
+        });
+
+        var binCountObj = null;
+        // 绘制函数
+        /*
+        -1:全部
+        其它则只绘制条件允许的Bin
+        */
+        function draw() {
+
+            let bondXMin = 0 - boxSizeX;
+            let bondXMax = width + boxSizeX;
+            let bondYMin = 0 - boxSizeY;
+            let bondYMax = height + boxSizeY;
+
+            ctx.clearRect(0, 0, canvas.width, canvas.height); // 清空画布
+
+            var fontSizeTmp = fontSize * scale;
+            ctx.font = fontSizeTmp.toFixed(0) + 'px Arial'; // 设置字体大小为15px
+
+            //复测最多向后找16位
+            let lastFindIndex = -1;
+            let pointIndex = -1;
+            //复测数量
+            let retestCount = 0;
+
+            let totalCount = 0;
+
+            binCountObj = {
+                // 1: 0,
+                // 2: 0,
+                // 3: 0,
+                // 4: 0,
+            };
+
+            //决定显示初测还是复测数据 true:初测 false:复测
+            const showFirstTest = document.querySelector('input[name="ignoreRetest"]:checked').value === 'yes';
+            let isRestest = false;
+            const showHWBin = document.querySelector('input[name="binType"]:checked').value === 'hw';
+            dataPoints.forEach(point => {
+                // 使用HWBin或SWBin进行绘制
+                const currentBin = showHWBin ? point.HWBin : point.SWBin; // 根据状态选择Bin
+
+                pointIndex++;
+                if (_hBinFilter.length > 0 && _hBinFilter.indexOf(currentBin) == -1) { // 使用currentBin
+                    return;
+                }
+                totalCount++;
+                isRestest = false;
+                //硬件Bin是良品的标识
+                if (point.HWBin >= 4) { // 使用currentBin
+
+                    const key = getDataPointsPosKey(point);
+                    const values = dataPointsDic[key];
+                    if (values.length > 1) {
+                        // 说明有复测的情况
+                        for (let i = 0; i < values.length; i++) {
+                            const value = values[i];
+                            if (showFirstTest) {
+                                //使用初测的值，当前为第一个点即可进行渲染
+                                if (i == 0 && value.index == pointIndex) {
+                                    // 因为要使用初测数据，所以将查找到渲染的点，设置为初测的值
+                                    break;
+                                }
+                                else {
+                                    //否则 不用渲染后续数据
+                                    return;
+                                }
+                            }
+                            else {
+                                //使用复测的值，当前为第一个点即可进行渲染
+                                if (i == values.length - 1 && value.index == pointIndex) {
+                                    break;
+                                }
+                                else {
+                                    if (value.index != pointIndex)
+                                        //继续向后查找
+                                        continue;
+                                    else
+                                        return;
+                                }
+                            }
+                        }
+                    }
+                }
+
+                if (isRestest)
+                    return;
+
+                // 使用currentBin进行绘制
+                if (binCountObj[currentBin] === undefined) {
+                    binCountObj[currentBin] = 0; // 初始化为0
+                }
+                binCountObj[currentBin]++;
+
+                // 计算调整后的坐标，考虑 boxSize
+                var adjustedX = (point.X - centerX) * boxSizeX * scale + (canvas.width / 2 + offsetX);
+                var adjustedY = (point.Y - centerY) * boxSizeY * scale + (canvas.height / 2 + offsetY); // Y轴反转
+
+                if (adjustedX > bondXMax || adjustedX < bondXMin)
+                    return;
+                if (adjustedY > bondYMax || adjustedY < bondYMin)
+                    return;
+
+                // 设置颜色
+                var color = currentBin === '4' ? 'red' : GetColorFromHWBin(currentBin); // 使用currentBin
+                ctx.fillStyle = color;
+                ctx.strokeStyle = color; // 边框颜色与文字颜色一致
+
+                let boxGap = 0.1; //需要增加边距，否则渲染会因为边框颜色覆盖产生显示问题
+                if (fontSizeTmp > 5) {
+                    // 绘制边框
+                    ctx.strokeRect(adjustedX - boxSizeX * scale / 2, adjustedY - boxSizeY * scale / 2, boxSizeX * scale * (1 - boxGap), boxSizeY * scale * (1 - boxGap)); // 边框
+                    // 绘制文本
+                    ctx.fillText(currentBin, adjustedX - ctx.measureText(currentBin).width / 2, adjustedY); // 文本居中
+                } else {
+                    ctx.fillRect(adjustedX - boxSizeX / 2, adjustedY - boxSizeY / 2, boxSizeX * scale * (1 - boxGap), boxSizeY * scale * (1 - boxGap));
+                }
+            });
+
+            let showText = '';
+            for (let i in binCountObj) {
+                showText += 'HBin' + i + '数量:' + binCountObj[i] + '<br>';
+            }
+            document.getElementById('countDisplay').innerHTML = showText;
+        }
+
+        // 获取颜色
+        function GetColorFromHWBin(hwBin) {
+            switch (hwBin) {
+                //生成颜色 30-39
+                case '0': return '#FF00FF'; // 品红
+                case '1': return '#00FF00'; // 绿色
+                case '2': return '#0000FF'; // 蓝色
+                case '3': return '#FFFF00'; // 黄色
+                case '4': return '#FF0000'; // 红色
+                case '5': return '#00FFFF'; // 青色
+                case '6': return '#FFA500'; // 橙色
+                case '7': return '#800080'; // 紫色
+                case '8': return '#FFC0CB'; // 粉色
+                case '9': return '#A52A2A'; // 棕色
+                case '10': return '#008000'; // 绿色
+                case '11': return '#800080'; // 紫色
+                case '12': return '#0000FF'; // 蓝色
+                case '13': return '#FFFF00'; // 黄色
+                case '14': return '#FF0000'; // 红色
+                case '15': return '#00FFFF'; // 青色
+                case '16': return '#FFA500'; // 橙色
+                case '17': return '#800080'; // 紫色
+                case '18': return '#008000'; // 绿色
+                case '19': return '#800080'; // 紫色
+                case '20': return '#008000'; // 绿色
+                case '21': return '#800080'; // 紫色
+                case '22': return '#008000'; // 绿色
+                case '23': return '#800080'; // 紫色
+                case '24': return '#008000'; // 绿色
+                case '25': return '#800080'; // 紫色
+                case '26': return '#008000'; // 绿色
+                case '27': return '#800080'; // 紫色
+                case '28': return '#008000'; // 绿色
+                case '29': return '#800080'; // 紫色
+                default: return '#000000'; // 默认黑色
+            }
+        }
+
+        // 添加鼠标事件处理
+        canvas.addEventListener('mousedown', function (e) {
+            isDragging = true;
+            startX = e.offsetX - offsetX;
+            startY = e.offsetY - offsetY;
+        });
+
+        canvas.addEventListener('mouseup', function () { isDragging = false; });
+        canvas.addEventListener('mousemove', function (e) {
+            if (isDragging) {
+                offsetX = e.offsetX - startX;
+                offsetY = e.offsetY - startY;
+                draw();
+            }
+        });
+
+        canvas.addEventListener('wheel', function (e) {
+            e.preventDefault();
+            scale += e.deltaY * -0.001;
+            scale = Math.min(Math.max(0.1, scale), 4); // 限制缩放范围
+            draw();
+        });
+
+        // 初始绘制
+        draw();
+    </script>
+</body>
+
+</html>
